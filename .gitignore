@@ -1,5 +1,9 @@
 # API keys and secrets
 config.js
+.env
+
+# Dependencies
+node_modules/
 
 # IDE
 .idea/

@@ -1,12 +1,11 @@
 <!DOCTYPE html>
 <html>
+
 <head>
     <title>Simple Map</title>
     <script src="config.js"></script>
     <script src="map.js"></script>
     <script>
-        // Dynamically load Google Maps API with key from config
-        // Uses callback to init map once API is ready
         const script = document.createElement('script');
         script.src = `https://maps.googleapis.com/maps/api/js?key=${CONFIG.GOOGLE_MAPS_API_KEY}&libraries=places&v=weekly&callback=initMap&loading=async`;
         script.async = true;
@@ -15,72 +14,254 @@
     </script>
     <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" rel="stylesheet">
 
-    <!-- Include jQuery -->
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js"></script>
+
+    <!-- Google Fonts Options -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Caprasimo&family=Quicksand:wght@400;600&display=swap"
+        rel="stylesheet">
+
     <style>
-        #map {
-            height: 100%;
-            width: 70%;
-            padding: 200px;
-            margin : 100px;
-            margin-left: 150px;
-        }
-        #myForm {
-            float: left;
-            width: 30%;
+        :root {
+            --font-heading: 'Caprasimo', cursive;
+            --font-body: 'Quicksand', sans-serif;
+            --bg-color: #f3f4f6;
+            --accent-color: #557A95;
+            /* Muted Earthy Blue */
+            --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
         }
 
-        html,
         body {
+            background-color: #eef2f6;
+            /* Soft Abstract Curves */
+            background-image:
+                radial-gradient(at 0% 0%, hsla(253, 16%, 7%, 0) 0, hsla(253, 16%, 7%, 0) 50%),
+                radial-gradient(at 50% 0%, hsla(225, 39%, 30%, 0) 0, hsla(225, 39%, 30%, 0) 50%),
+                radial-gradient(at 100% 0%, hsla(339, 49%, 30%, 0) 0, hsla(339, 49%, 30%, 0) 50%);
+            background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23557a95' fill-opacity='0.05'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+            font-family: var(--font-body);
+            color: #374151;
+        }
+
+        h1,
+        h2,
+        h3,
+        h4,
+        h5,
+        h6 {
+            font-family: var(--font-heading);
+            color: #1f2937;
+            letter-spacing: 0.5px;
+        }
+
+        h1 {
+            font-size: 3.5rem;
+            color: var(--accent-color);
+            margin-bottom: 0.5rem;
+        }
+
+        .container {
+            max-width: 95%;
+            margin-top: 40px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 30px;
+        }
+
+        #map {
+            height: 80vh;
+            width: 65%;
+            border-radius: 12px;
+            box-shadow: var(--card-shadow);
+            border: 8px solid white;
+            /* Photo frame effect */
+            order: 2;
+        }
+
+        #myForm,
+        #results-panel {
+            width: 33%;
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(10px);
+            padding: 30px;
+            border-radius: 16px;
+            box-shadow: var(--card-shadow);
+            border: 1px solid white;
+            min-height: 80vh;
+            order: 1;
+        }
+
+        #results-panel {
+            display: none;
+        }
+
+        .form-group label {
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            font-weight: 700;
+            color: var(--accent-color);
+            margin-bottom: 8px;
+            display: block;
+        }
+
+        .form-control {
+            border-radius: 8px;
+            background-color: #f3f4f6;
+            border: 2px solid transparent;
+            /* Cleaner look */
+            padding: 12px 15px;
+            font-weight: 600;
+            transition: all 0.2s;
+            color: #4b5563;
+        }
+
+        .form-control:focus {
+            background-color: #fff;
+            border-color: var(--accent-color);
+            box-shadow: 0 4px 12px rgba(85, 122, 149, 0.15);
+            outline: none;
+        }
+
+        /* List items in results */
+        #route-stops .list-group-item,
+        .stop-item {
+            border: none;
+            background: #f8fafc;
+            margin-bottom: 10px;
+            border-radius: 8px;
+            padding: 15px;
+            border-left: 4px solid var(--accent-color);
+        }
+
+        .btn {
+            border-radius: 8px;
+            font-weight: 700;
+            text-transform: none;
+            letter-spacing: 0.5px;
+            font-size: 1rem;
+            padding: 12px 24px;
+            transition: all 0.2s;
+            margin-top: 10px;
+        }
+
+        .btn:active {
+            transform: scale(0.98);
+        }
+
+        .btn-primary {
+            background-color: var(--accent-color);
+            border-color: var(--accent-color);
+            box-shadow: 0 4px 6px rgba(85, 122, 149, 0.2);
+            color: white;
+        }
+
+        .btn-primary:hover,
+        .btn-primary:focus {
+            background-color: #3e5c71;
+            border-color: #3e5c71;
+            transform: translateY(-1px);
+            box-shadow: 0 6px 8px rgba(85, 122, 149, 0.3);
+        }
+
+        .btn-success {
+            background-color: #5D9B84;
+            border-color: #5D9B84;
+            box-shadow: 0 4px 6px rgba(93, 155, 132, 0.2);
+        }
+
+        .btn-success:hover {
+            background-color: #4a7d6a;
+            border-color: #4a7d6a;
+            transform: translateY(-1px);
         }
     </style>
 </head>
+
 <body>
+    <!-- Font Switcher Removed -->
 
-<div class="container">
-    <form id="myForm">
-        <div class="form-group">
-            <label for="startingLocation">Starting location:</label>
-            <input id="startingLocation" class="form-control" type="text" placeholder="Enter a location">
-            <input type="checkbox" id="sameStartEnd" name="sameStartEnd">   <!-- add on click disable end location field -->
-            <label for="sameStartEnd">Same start and end location</label>
+    <div class="container">
+        <form id="myForm">
+            <h1 class="mb-2" style="font-size: 2.5rem; letter-spacing: -1px;">Where To?</h1>
+            <p class="text-muted mb-4">Plan your errand run.</p>
+            <div class="form-group">
+                <label for="startingLocation">Starting location:</label>
+                <input id="startingLocation" class="form-control" type="text" placeholder="Enter a location">
+            </div>
+
+            <div class="form-group"
+                style="display: flex; align-items: center; gap: 10px; margin-top: -10px; margin-bottom: 20px;">
+                <input type="checkbox" id="sameStartEnd" name="sameStartEnd"
+                    style="width: 18px; height: 18px; cursor: pointer; accent-color: var(--accent-color);">
+                <label for="sameStartEnd"
+                    style="margin: 0; cursor: pointer; font-size: 0.85rem; text-transform: none; color: #6b7280; letter-spacing: 0;">Same
+                    start and end location</label>
+            </div>
+
+            <div class="form-group" id="ending-group">
+                <label for="endingLocation">Ending location:</label>
+                <input id="endingLocation" class="form-control" type="text" placeholder="Enter a location">
+            </div>
+
+            <div class="form-group">
+                <label for="field1">Location 1</label>
+                <input type="text" class="form-control" id="field1">
+            </div>
+            <div class="form-group">
+                <label for="field2">Location 2</label>
+                <input type="text" class="form-control" id="field2">
+            </div>
+            <button type="button" id="addButton" class="btn btn-primary">Add Location</button>
+            <button id="searchButton" class="btn btn-primary">Search</button>
+        </form>
+
+        <div id="results-panel">
+            <h4 class="mb-3">Route Optimized!</h4>
+            <div id="route-stats" class="mb-3 text-muted"></div>
+
+            <h5 class="mb-2">Stops:</h5>
+            <ul id="route-stops" class="list-group mb-4" style="list-style: none; padding: 0;">
+                <!-- Stops will be injected here -->
+            </ul>
+
+            <a id="maps-link" href="#" target="_blank" class="btn btn-success btn-block mb-2">
+                Open in Google Maps
+            </a>
+            <button id="back-button" class="btn btn-outline-secondary btn-block">
+                Start New Search
+            </button>
         </div>
 
-        <div class="form-group">
-            <label for="endingLocation">Ending location:</label>
-            <input id="endingLocation" class="form-control" type="text" placeholder="Enter a location">
-        </div>
+        <div id="map"></div>
+    </div>
 
-        <div class="form-group">
-            <label for="field1">Location 1</label>
-            <input type="text" class="form-control" id="field1">
-        </div>
-        <div class="form-group">
-            <label for="field2">Location 2</label>
-            <input type="text" class="form-control" id="field2">
-        </div>
-        <button id="addButton" class="btn btn-primary">Add Location</button>
-        <button id="searchButton" class="btn btn-primary">Search</button>
-    </form>
-    <div id="map"></div>
-</div>
+    <script>
+        $(document).ready(function () {
+            var fieldNumber = 3;
 
-<script>
-    $(document).ready(function() {
-        var fieldNumber = 3;
+            // Checkbox logic
+            $('#sameStartEnd').change(function () {
+                if (this.checked) {
+                    $('#ending-group').slideUp(200);
+                } else {
+                    $('#ending-group').slideDown(200);
+                }
+            });
 
-        $('#addButton').click(function() {
-            $('#myForm').append(`
-          <div class="form-group">
+            $('#addButton').click(function () {
+                $(`<div class="form-group">
             <label for="field${fieldNumber}">Location ${fieldNumber}</label>
             <input type="text" class="form-control" id="field${fieldNumber}">
-          </div>
-        `);
+          </div>`).insertBefore('#addButton');
 
-            fieldNumber++;
+                fieldNumber++;
+            });
         });
-    });
-</script>
+    </script>
 
 </body>
+
 </html>

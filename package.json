@@ -1,0 +1,22 @@
+{
+  "name": "errand-planner",
+  "version": "1.0.0",
+  "description": "Errand route planner with LLM-powered search filtering",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "jest",
+    "eval": "node prompt-eval.js",
+    "eval:dry": "node prompt-eval.js --dry-run"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.24.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "supertest": "^6.3.3"
+  }
+}
