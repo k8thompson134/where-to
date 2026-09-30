@@ -13,6 +13,9 @@ import styles from './WhereToApp.module.scss';
 
 const API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '';
 
+// Text Search results carry formatted_address; only Nearby Search fills vicinity.
+const addressOf = (p: google.maps.places.PlaceResult) => p.vicinity ?? p.formatted_address;
+
 interface PlaceOption {
     name: string;
     vicinity: string;
@@ -229,7 +232,7 @@ export default function WhereToApp() {
                         const serializablePlaces = candidates.map(p => ({
                             name: p.name,
                             types: p.types,
-                            vicinity: p.vicinity
+                            vicinity: addressOf(p)
                         }));
 
                         const apiRes = await fetch('/api/filter', {
@@ -250,11 +253,11 @@ export default function WhereToApp() {
                                 p !== undefined &&
                                 !!p.geometry?.location &&
                                 !!p.name &&
-                                !!p.vicinity
+                                !!addressOf(p)
                             )
                             .map(p => ({
                                 name: p.name!,
-                                vicinity: p.vicinity!,
+                                vicinity: addressOf(p)!,
                                 geometry: p.geometry!,
                                 place_id: p.place_id ?? ''
                             }));
@@ -265,12 +268,12 @@ export default function WhereToApp() {
                         // Fallback
                         const fallback = candidates
                             .filter((p): p is google.maps.places.PlaceResult =>
-                                !!p.geometry?.location && !!p.name && !!p.vicinity
+                                !!p.geometry?.location && !!p.name && !!addressOf(p)
                             )
                             .slice(0, 5)
                             .map(p => ({
                                 name: p.name!,
-                                vicinity: p.vicinity!,
+                                vicinity: addressOf(p)!,
                                 geometry: p.geometry!,
                                 place_id: p.place_id ?? ''
                             }));
