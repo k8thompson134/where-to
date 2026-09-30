@@ -1,22 +1,35 @@
 {
-  "name": "errand-planner",
-  "version": "1.0.0",
+  "name": "where-to",
+  "version": "2.0.0",
+  "private": true,
   "description": "Errand route planner with LLM-powered search filtering",
-  "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "test": "jest",
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "eval": "node prompt-eval.js",
     "eval:dry": "node prompt-eval.js --dry-run"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.24.0",
-    "cors": "^2.8.5",
-    "dotenv": "^16.3.1",
-    "express": "^4.18.2"
+    "@anthropic-ai/sdk": "^0.74.0",
+    "@googlemaps/js-api-loader": "^2.0.2",
+    "next": "16.1.6",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "sass": "^1.97.3"
   },
   "devDependencies": {
-    "jest": "^29.7.0",
-    "supertest": "^6.3.3"
+    "@types/google.maps": "^3.66.4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "dotenv": "^16.3.1",
+    "eslint": "^9",
+    "eslint-config-next": "16.1.6",
+    "typescript": "^5",
+    "vitest": "^2.1.0"
   }
 }

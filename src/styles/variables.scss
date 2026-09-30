@@ -1,0 +1,153 @@
+// ============================================
+// GROUND CONTROL — Design Tokens
+// NASA 1975 Graphics Standards + Mission Control
+// ============================================
+
+// --- NASA Official ---
+$nasa-blue: #0B3D91;
+$nasa-red: #FC3D21;
+$nasa-cream: #F5F1E3;
+
+// --- Console / Control Panel ---
+$deep-space: #0A0E27;
+$panel-dark: #1C2541;
+$panel-mid: #253557;
+$border-gray: #3A506B;
+$console-mint: #B8D4C8;
+$console-teal: #5C9EAD;
+
+// --- Indicators ---
+$nixie-orange: #FF6B35;
+$led-green: #00FF9C;
+$led-yellow: #FFD23F;
+$led-red: #FF6B6B;
+
+// --- Text ---
+$text-primary: $nasa-cream;
+$text-secondary: #A0A8C0;
+$text-muted: #6B7394;
+
+// --- Typography ---
+$font-display: 'Space Grotesk', sans-serif;
+$font-body: 'Inter', sans-serif;
+$font-mono: 'IBM Plex Mono', monospace;
+
+// --- Spacing (8px grid) ---
+$space-1: 0.25rem; // 4px
+$space-2: 0.5rem; // 8px
+$space-3: 0.75rem; // 12px
+$space-4: 1rem; // 16px
+$space-5: 1.5rem; // 24px
+$space-6: 2rem; // 32px
+$space-7: 3rem; // 48px
+$space-8: 4rem; // 64px
+$space-9: 6rem; // 96px
+
+// --- Border Radius ---
+$radius-sm: 2px;
+$radius-md: 4px;
+$radius-lg: 8px;
+$radius-badge: 999px;
+
+// --- Shadows (inset panel feel) ---
+$shadow-panel: 0 1px 3px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+$shadow-inset: inset 0 2px 4px rgba(0, 0, 0, 0.5);
+$shadow-glow-orange: 0 0 12px rgba($nixie-orange, 0.4);
+$shadow-glow-green: 0 0 8px rgba($led-green, 0.3);
+$shadow-glow-blue: 0 0 12px rgba($console-teal, 0.4);
+
+// --- Transitions ---
+$transition-fast: 150ms ease;
+$transition-base: 250ms ease;
+$transition-slow: 400ms ease;
+
+// --- Breakpoints ---
+$bp-sm: 640px;
+$bp-md: 768px;
+$bp-lg: 1024px;
+$bp-xl: 1280px;
+
+// --- Mixins ---
+@mixin panel {
+  background: $panel-dark;
+  border: 1px solid $border-gray;
+  border-radius: $radius-md;
+  box-shadow: $shadow-panel;
+}
+
+@mixin dymo-label {
+  font-family: $font-mono;
+  font-size: 0.65rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: $text-muted;
+  background: rgba($border-gray, 0.3);
+  padding: $space-1 $space-2;
+  border-radius: $radius-sm;
+  border: 1px solid rgba($border-gray, 0.5);
+  white-space: nowrap;
+  display: inline-block;
+}
+
+@mixin scanline {
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(0deg,
+        transparent,
+        transparent 2px,
+        rgba(0, 0, 0, 0.08) 2px,
+        rgba(0, 0, 0, 0.08) 4px);
+    pointer-events: none;
+    border-radius: inherit;
+  }
+}
+
+@mixin crt-glow($color: $console-mint) {
+  text-shadow: 0 0 4px rgba($color, 0.6), 0 0 12px rgba($color, 0.2);
+}
+
+@mixin input {
+  background: $deep-space;
+  color: $text-primary;
+  border: 1px solid $border-gray;
+  padding: $space-2;
+  border-radius: $radius-sm;
+  font-family: $font-mono;
+
+  &:focus {
+    outline: none;
+    border-color: $console-teal;
+    box-shadow: 0 0 0 2px rgba($console-teal, 0.2);
+  }
+
+  &::placeholder {
+    color: $text-muted;
+  }
+}
+
+@mixin button {
+  background: $nasa-blue;
+  color: #fff;
+  border: none;
+  padding: $space-2 $space-4;
+  border-radius: $radius-sm;
+  font-family: $font-mono;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  display: flex;
+  align-items: center;
+  transition: background $transition-fast;
+
+  &:hover {
+    background: #1a5bb8;
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+}

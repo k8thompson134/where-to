@@ -10,11 +10,11 @@
  *   node prompt-eval.js --dry-run    # Show test cases without calling API
  */
 
-require('dotenv').config();
+require('dotenv').config({ path: ['.env.local', '.env'] });
 const Anthropic = require('@anthropic-ai/sdk');
 
 const anthropic = new Anthropic({
-    apiKey: process.env.CLAUDE_API_KEY
+    apiKey: process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY
 });
 
 // ============================================================
@@ -275,7 +275,7 @@ async function runTest(testCase, promptStyle) {
 
     try {
         const response = await anthropic.messages.create({
-            model: 'claude-3-5-haiku-20241022',
+            model: 'claude-haiku-4-5',
             max_tokens: 64,
             temperature: 0,
             messages: [

@@ -1,35 +1,24 @@
-# API keys and secrets (DO NOT COMMIT)
-config.js
+# Secrets
 .env
-*.env.local
+.env*.local
 
 # Dependencies
 node_modules/
-package-lock.json      # Often committed, but sometimes ignored if using yarn exclusively. Usually KEEP tracked.
-yarn.lock              # Keep tracked if using yarn.
+
+# Next.js
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+
+# Vercel
+.vercel
 
 # Logs
 npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-logs/
 *.log
 
-# Editor directories and files
+# OS / editor
+.DS_Store
 .idea/
 .vscode/
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.swp
-.DS_Store
-Thumbs.db
-
-# Build artifacts
-dist/
-build/
-
-# Test coverage
-coverage/
-.nyc_output/

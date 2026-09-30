@@ -1,0 +1,77 @@
+@use "sass:color";
+@use '../styles/variables' as *;
+
+.main {
+  padding: $space-6;
+  max-width: 1400px;
+  margin: 0 auto;
+
+  @media (max-width: 768px) {
+    padding: $space-3 $space-4;
+  }
+}
+
+.backLink {
+  display: inline-flex;
+  align-items: center;
+  color: $console-teal;
+  text-decoration: none;
+  font-family: var(--font-body), 'Quicksand', sans-serif;
+  font-size: 0.9rem;
+  margin-bottom: $space-4;
+  transition: color $transition-fast;
+
+  &:hover {
+    color: color.adjust($console-teal, $lightness: 15%);
+  }
+}
+
+.title {
+  font-family: $font-display;
+  font-size: 2.5rem;
+  margin-bottom: $space-4;
+
+  @media (max-width: 768px) {
+    font-size: 2rem;
+  }
+}
+
+.description {
+  font-size: 1.1rem;
+  color: $text-secondary;
+  margin-bottom: $space-6;
+
+  @media (max-width: 768px) {
+    display: none; // Hiding to give the app layout more vertical space
+  }
+}
+
+.links {
+  margin-bottom: $space-6;
+}
+
+.githubLink {
+  color: $console-teal;
+  font-family: $font-mono;
+  font-size: 0.9rem;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: $space-2;
+  transition: color $transition-fast;
+
+  &::after {
+    content: '↗';
+    font-family: sans-serif;
+  }
+
+  &:hover {
+    color: $nixie-orange;
+    text-decoration: underline;
+  }
+}
+
+.appContainer {
+  width: 100%;
+  min-height: 70vh;
+}

@@ -1,95 +1,40 @@
-# Errand Planner - Startup Guide
+# Where To? - Startup Guide
 
 ## Prerequisites
 
-- Node.js (v18+)
+- Node.js 20+
 - Claude API key from [Anthropic Console](https://console.anthropic.com/)
-- Google Maps API key from [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
+- Google Maps API key from [Google Cloud Console](https://console.cloud.google.com/apis/credentials) with the Maps JavaScript and Places APIs enabled
 
 ## Quick Start
 
-### 1. Install dependencies
-
 ```bash
 npm install
+cp .env.example .env.local   # then fill in both keys
+npm run dev
 ```
 
-### 2. Configure environment
-
-**Backend (Claude API):**
-```bash
-cp .env.example .env
-```
-Edit `.env` and add your Claude API key:
-```
-CLAUDE_API_KEY=sk-ant-api03-xxxxx
-```
-
-**Frontend (Google Maps):**
-```bash
-cp config.example.js config.js
-```
-Edit `config.js` and add your Google Maps API key:
-```javascript
-const CONFIG = {
-    GOOGLE_MAPS_API_KEY: 'AIzaSy...',
-    BACKEND_URL: 'http://localhost:3000'
-};
-```
-
-### 3. Start the backend
-
-```bash
-npm start
-```
-
-You should see:
-```
-Server running on http://localhost:3000
-Endpoints:
-  GET  /api/health - Health check
-  POST /api/filter-places - Filter places with Claude
-```
-
-### 4. Open the frontend
-
-Open `display.html` in your browser, or serve it locally:
-```bash
-npx serve .
-```
+Open http://localhost:3000/where-to. The app uses `basePath: "/where-to"` so it can be served under that path on the portfolio site; the filter endpoint is `POST /where-to/api/filter`.
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `npm start` | Start backend server |
-| `npm test` | Run unit tests |
-| `npm run eval` | Evaluate prompt styles against Claude |
-| `npm run eval:dry` | Preview test cases without API calls |
+| `npm run dev` | Start the dev server |
+| `npm run build` | Production build |
+| `npm test` | Run unit tests (Vitest) |
+| `npm run lint` | Lint |
+| `npm run eval` | Evaluate prompt styles against Claude (real API calls) |
+| `npm run eval:dry` | Preview eval cases without API calls |
 
-## Configuration Options
-
-Set these environment variables before starting:
+## Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PORT` | 3000 | Server port |
-| `PROMPT_STYLE` | pattern | Prompt style: `pattern`, `minimal`, `primary`, `verbose` |
+| `ANTHROPIC_API_KEY` | — | Claude API key (server only) |
+| `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` | — | Google Maps key (exposed to the browser; restrict it by HTTP referrer) |
+| `PROMPT_STYLE` | `pattern` | Filter prompt style: `pattern`, `minimal`, `primary`, `verbose` |
 
-Example:
-```bash
-PORT=8080 PROMPT_STYLE=verbose npm start
-```
+## Deployment
 
-## Troubleshooting
-
-**"CLAUDE_API_KEY not set"**
-- Make sure `.env` file exists and contains your key
-
-**"Google Maps not loading"**
-- Check `config.js` has valid Google Maps API key
-- Ensure Maps JavaScript API and Places API are enabled in Google Cloud Console
-
-**Empty filter results**
-- Check backend logs for Claude responses
-- Try `PROMPT_STYLE=verbose` for more explicit filtering
+Deployed as its own Vercel project from this repo. The portfolio site rewrites `/where-to` and `/where-to/:path*` to that deployment, so the app appears at `<portfolio>/where-to`.
