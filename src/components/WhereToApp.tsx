@@ -232,7 +232,7 @@ export default function WhereToApp() {
                             vicinity: p.vicinity
                         }));
 
-                        const apiRes = await fetch('/where-to/api/filter', {
+                        const apiRes = await fetch('/api/filter', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ userQuery: query, places: serializablePlaces })

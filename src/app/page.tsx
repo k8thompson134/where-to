@@ -4,9 +4,7 @@ import WhereToApp from '@/components/WhereToApp';
 export default function WhereTo() {
     return (
         <main className={styles.main}>
-            {/* Plain anchor: "/" must leave this app's basePath and reach the portfolio root. */}
-            {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
-            <a href="/" className={styles.backLink}>
+            <a href="https://k8thompson.dev" className={styles.backLink}>
                 ← Back to Command Center
             </a>
 

@@ -10,7 +10,7 @@ const { POST } = await import('./route');
 
 function post(body: unknown) {
   return POST(
-    new NextRequest('http://localhost/where-to/api/filter', {
+    new NextRequest('http://localhost/api/filter', {
       method: 'POST',
       body: JSON.stringify(body),
     })

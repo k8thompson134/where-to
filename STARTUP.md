@@ -14,7 +14,7 @@ cp .env.example .env.local   # then fill in both keys
 npm run dev
 ```
 
-Open http://localhost:3000/where-to. The app uses `basePath: "/where-to"` so it can be served under that path on the portfolio site; the filter endpoint is `POST /where-to/api/filter`.
+Open http://localhost:3000. The filter endpoint is `POST /api/filter`.
 
 ## Commands
 
@@ -37,4 +37,4 @@ Open http://localhost:3000/where-to. The app uses `basePath: "/where-to"` so it 
 
 ## Deployment
 
-Deployed as its own Vercel project from this repo. The portfolio site rewrites `/where-to` and `/where-to/:path*` to that deployment, so the app appears at `<portfolio>/where-to`.
+Deployed as its own Vercel project from this repo at https://whereto.k8thompson.dev. The portfolio's `/where-to` redirects there.
