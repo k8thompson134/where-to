@@ -11,7 +11,7 @@ describe('generateCombinations', () => {
   });
 
   it('returns all pairs for two arrays', () => {
-    expect(generateCombinations([['a', 'b'], [1, 2]])).toEqual([
+    expect(generateCombinations<string | number>([['a', 'b'], [1, 2]])).toEqual([
       ['a', 1],
       ['a', 2],
       ['b', 1],

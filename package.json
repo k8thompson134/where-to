@@ -10,8 +10,8 @@
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
-    "eval": "node prompt-eval.js",
-    "eval:dry": "node prompt-eval.js --dry-run"
+    "eval": "tsx prompt-eval.ts",
+    "eval:dry": "tsx prompt-eval.ts --dry-run"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.74.0",
@@ -29,6 +29,7 @@
     "dotenv": "^16.3.1",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
+    "tsx": "^4.23.15",
     "typescript": "^5",
     "vitest": "^2.1.0"
   }

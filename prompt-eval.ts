@@ -1,84 +1,26 @@
 /**
- * Prompt Evaluation Harness
+ * Prompt evaluation harness: scores each filter prompt style against labeled cases using real Claude calls.
+ * Uses the same prompt builder and Claude call as /api/filter, so results reflect production.
  *
- * Tests different prompt styles against real Claude API responses.
- * Run with: node prompt-eval.js [style] [--dry-run]
- *
- * Examples:
- *   node prompt-eval.js              # Test all styles
- *   node prompt-eval.js primary      # Test only 'primary' style
- *   node prompt-eval.js --dry-run    # Show test cases without calling API
+ *   npm run eval              # all styles
+ *   npm run eval -- pattern   # one style
+ *   npm run eval:dry          # list cases, no API calls
  */
+import { config } from 'dotenv';
+import Anthropic from '@anthropic-ai/sdk';
+import { FILTER_MODEL, filterPlacesWithClaude } from './src/lib/where-to/claudeFilter';
+import { FILTER_PROMPT_STYLES, type FilterPromptStyle, type PlaceForFilter } from './src/lib/where-to/filter';
 
-require('dotenv').config({ path: ['.env.local', '.env'] });
-const Anthropic = require('@anthropic-ai/sdk');
+config({ path: ['.env.local', '.env'], quiet: true });
 
-const anthropic = new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY
-});
+interface TestCase {
+    name: string;
+    query: string;
+    places: PlaceForFilter[];
+    expected: number[];
+}
 
-// ============================================================
-// PROMPT STYLES (same as server.js)
-// ============================================================
-
-const prompts = {
-    minimal: (query, placesList) => `${placesList}
-
-"${query}" → JSON indices of matches:`,
-
-    primary: (query, placesList) => `${placesList}
-
-Query: "${query}"
-Return JSON array of indices where query is the place's PRIMARY purpose (not secondary). Retail only.`,
-
-    verbose: (query, placesList) => `Filter these Google Places results. User wants: "${query}"
-
-Places:
-${placesList}
-
-STRICT RULES - only include RETAIL STORES where you can BUY things:
-- "coffee" = coffee shops ONLY (Starbucks, Colectivo, Stone Creek). EXCLUDE restaurants/cafes that just serve coffee.
-- "craft store" = RETAIL arts & crafts supply stores ONLY (Michaels, Joann, Hobby Lobby, Blick Art Materials). EXCLUDE: university facilities, community centers, hardware stores, sex shops, variety stores, bead shops.
-- "grocery" = grocery stores/supermarkets ONLY.
-
-Return ONLY a JSON array of indices. No explanation, no text, just the array.
-Example: [0, 3]`,
-
-    // NEW: Hybrid style with few-shot examples
-    fewshot: (query, placesList) => `${placesList}
-
-"${query}" → indices where PRIMARY purpose matches. Retail only.
-✓ Starbucks for "coffee" (coffee shop)
-✗ Panera for "coffee" (bakery-cafe)
-JSON:`,
-
-    // IMPROVED: Addresses specific failures from evaluation
-    fewshot2: (query, placesList) => `${placesList}
-
-"${query}" → JSON indices where this is the PRIMARY business purpose.
-✓ Include: Starbucks, Dunkin, Dutch Bros, Caribou (coffee chains)
-✓ Include: Costco, Sam's Club, Aldi (grocery/warehouse)
-✗ Exclude: Wawa, 7-Eleven (convenience stores)
-✗ Exclude: Panera, Denny's (restaurants)
-Indices:`,
-
-    // Pattern-based: teaches reasoning, not specific chains
-    pattern: (query, placesList) => `${placesList}
-
-"${query}" → JSON indices where query matches PRIMARY purpose.
-Rule: Include if query IS what they do. Exclude if query is just something they ALSO offer.
-Specific Brands: If query is a brand name (e.g., "World Market", "Dunkin"), ONLY match that specific chain.
-Examples:
-- "coffee" ✓ coffee shops, ✗ restaurants with coffee
-- "grocery" ✓ supermarkets, ✗ convenience stores
-- "bank" ✓ financial banks, ✗ places with "bank" in name`
-};
-
-// ============================================================
-// TEST CASES: [query, places[], expectedIndices[]]
-// ============================================================
-
-const testCases = [
+const testCases: TestCase[] = [
     // --- Coffee edge cases ---
     {
         name: 'coffee: shops vs restaurants',
@@ -233,11 +175,7 @@ const testCases = [
     }
 ];
 
-// ============================================================
-// METRICS CALCULATION
-// ============================================================
-
-function calculateMetrics(actual, expected) {
+function calculateMetrics(actual: number[], expected: number[]) {
     const actualSet = new Set(actual);
     const expectedSet = new Set(expected);
 
@@ -257,116 +195,68 @@ function calculateMetrics(actual, expected) {
     return { precision, recall, f1, truePositives, falsePositives, falseNegatives };
 }
 
-// ============================================================
-// RUN EVALUATION
-// ============================================================
-
-async function runTest(testCase, promptStyle) {
-    const placesList = testCase.places.map((p, i) =>
-        `${i}. ${p.name}${p.types && p.types.length > 0 ? ' - Types: ' + p.types.join(', ') : ''}`
-    ).join('\n');
-
-    let prompt = prompts[promptStyle](testCase.query, placesList);
-
-    // Remove trailing bracket if present, as it will be in the pre-fill
-    if (prompt.trim().endsWith('[')) {
-        prompt = prompt.trim().slice(0, -1).trim();
-    }
-
-    try {
-        const response = await anthropic.messages.create({
-            model: 'claude-haiku-4-5',
-            max_tokens: 64,
-            temperature: 0,
-            messages: [
-                { role: 'user', content: prompt },
-                { role: 'assistant', content: '[' } // Pre-fill to force JSON
-            ]
-        });
-
-        const responseText = response.content[0].text.trim();
-        // Since we pre-filled '[', the model output will start after it. 
-        // We need to reconstruct the full JSON.
-        const fullJsonStr = '[' + responseText;
-
-        const jsonMatch = fullJsonStr.match(/\[[\d,\s]*\]/);
-        const indices = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
-
-        return {
-            success: true,
-            indices,
-            rawResponse: fullJsonStr,
-            inputTokens: response.usage.input_tokens,
-            outputTokens: response.usage.output_tokens
-        };
-    } catch (error) {
-        return { success: false, error: error.message, indices: [] };
-    }
-}
-
-async function evaluatePromptStyle(style, cases) {
+async function evaluatePromptStyle(client: Anthropic, style: FilterPromptStyle, cases: TestCase[]) {
     console.log(`\n${'='.repeat(60)}`);
     console.log(`EVALUATING: ${style.toUpperCase()}`);
     console.log('='.repeat(60));
 
-    const results = [];
+    const results: { metrics: ReturnType<typeof calculateMetrics>; passed: boolean }[] = [];
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
 
     for (const testCase of cases) {
         process.stdout.write(`  ${testCase.name}... `);
 
-        const result = await runTest(testCase, style);
-        const metrics = calculateMetrics(result.indices, testCase.expected);
-
-        totalInputTokens += result.inputTokens || 0;
-        totalOutputTokens += result.outputTokens || 0;
+        let indices: number[] = [];
+        try {
+            const res = await filterPlacesWithClaude(client, testCase.query, testCase.places, style);
+            indices = res.indices;
+            totalInputTokens += res.inputTokens;
+            totalOutputTokens += res.outputTokens;
+        } catch (error) {
+            console.log(`ERROR ${error instanceof Error ? error.message : error}`);
+        }
+        const metrics = calculateMetrics(indices, testCase.expected);
 
         const passed = metrics.f1 === 1.0;
-        const status = passed ? '✓' : '✗';
-        console.log(`${status} F1=${metrics.f1.toFixed(2)} (P=${metrics.precision.toFixed(2)}, R=${metrics.recall.toFixed(2)})`);
+        console.log(`${passed ? '✓' : '✗'} F1=${metrics.f1.toFixed(2)} (P=${metrics.precision.toFixed(2)}, R=${metrics.recall.toFixed(2)})`);
 
         if (!passed) {
             console.log(`      Expected: [${testCase.expected.join(', ')}]`);
-            console.log(`      Got:      [${result.indices.join(', ')}]`);
+            console.log(`      Got:      [${indices.join(', ')}]`);
             if (metrics.falsePositives.length > 0) {
-                const fpNames = metrics.falsePositives.map(i => testCase.places[i]?.name || `?${i}`);
-                console.log(`      False+:   ${fpNames.join(', ')}`);
+                console.log(`      False+:   ${metrics.falsePositives.map(i => testCase.places[i]?.name ?? `?${i}`).join(', ')}`);
             }
             if (metrics.falseNegatives.length > 0) {
-                const fnNames = metrics.falseNegatives.map(i => testCase.places[i]?.name || `?${i}`);
-                console.log(`      Missed:   ${fnNames.join(', ')}`);
+                console.log(`      Missed:   ${metrics.falseNegatives.map(i => testCase.places[i]?.name ?? `?${i}`).join(', ')}`);
             }
         }
 
-        results.push({ testCase, result, metrics, passed });
-
-        // Rate limiting
-        await new Promise(r => setTimeout(r, 200));
+        results.push({ metrics, passed });
     }
 
-    // Summary
     const passedCount = results.filter(r => r.passed).length;
-    const avgF1 = results.reduce((sum, r) => sum + r.metrics.f1, 0) / results.length;
-    const avgPrecision = results.reduce((sum, r) => sum + r.metrics.precision, 0) / results.length;
-    const avgRecall = results.reduce((sum, r) => sum + r.metrics.recall, 0) / results.length;
+    const avg = (f: (m: ReturnType<typeof calculateMetrics>) => number) =>
+        results.reduce((sum, r) => sum + f(r.metrics), 0) / results.length;
+    const avgF1 = avg(m => m.f1);
 
     console.log(`\n  SUMMARY for ${style}:`);
     console.log(`    Passed: ${passedCount}/${cases.length} (${(100 * passedCount / cases.length).toFixed(0)}%)`);
-    console.log(`    Avg F1: ${avgF1.toFixed(3)}  Precision: ${avgPrecision.toFixed(3)}  Recall: ${avgRecall.toFixed(3)}`);
+    console.log(`    Avg F1: ${avgF1.toFixed(3)}  Precision: ${avg(m => m.precision).toFixed(3)}  Recall: ${avg(m => m.recall).toFixed(3)}`);
     console.log(`    Tokens: ${totalInputTokens} in, ${totalOutputTokens} out`);
 
-    return { style, results, passedCount, avgF1, avgPrecision, avgRecall, totalInputTokens, totalOutputTokens };
+    return { style, passedCount, avgF1, totalInputTokens };
 }
 
 async function main() {
     const args = process.argv.slice(2);
     const dryRun = args.includes('--dry-run');
-    const specificStyle = args.find(a => !a.startsWith('--'));
+    const specificStyle = args.find(a => !a.startsWith('--')) as FilterPromptStyle | undefined;
 
     console.log('Prompt Evaluation Harness');
+    console.log(`Model: ${FILTER_MODEL}`);
     console.log(`Test cases: ${testCases.length}`);
-    console.log(`Prompt styles: ${Object.keys(prompts).join(', ')}`);
+    console.log(`Prompt styles: ${FILTER_PROMPT_STYLES.join(', ')}`);
 
     if (dryRun) {
         console.log('\n[DRY RUN] Showing test cases:\n');
@@ -374,33 +264,30 @@ async function main() {
             console.log(`${i + 1}. ${tc.name}`);
             console.log(`   Query: "${tc.query}"`);
             console.log(`   Expected: [${tc.expected.join(', ')}]`);
-            tc.places.forEach((p, j) => {
-                const marker = tc.expected.includes(j) ? '✓' : ' ';
-                console.log(`   ${marker} ${j}. ${p.name}`);
-            });
+            tc.places.forEach((p, j) => console.log(`   ${tc.expected.includes(j) ? '✓' : ' '} ${j}. ${p.name}`));
             console.log();
         });
         return;
     }
 
-    if (!process.env.CLAUDE_API_KEY) {
-        console.error('ERROR: CLAUDE_API_KEY not set in .env');
+    const apiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
+    if (!apiKey) {
+        console.error('ERROR: set ANTHROPIC_API_KEY in .env.local');
         process.exit(1);
     }
+    const client = new Anthropic({ apiKey });
 
-    const stylesToTest = specificStyle ? [specificStyle] : Object.keys(prompts);
+    if (specificStyle && !FILTER_PROMPT_STYLES.includes(specificStyle)) {
+        console.error(`Unknown style: ${specificStyle}`);
+        process.exit(1);
+    }
+    const stylesToTest = specificStyle ? [specificStyle] : FILTER_PROMPT_STYLES;
+
     const allResults = [];
-
     for (const style of stylesToTest) {
-        if (!prompts[style]) {
-            console.error(`Unknown style: ${style}`);
-            continue;
-        }
-        const styleResult = await evaluatePromptStyle(style, testCases);
-        allResults.push(styleResult);
+        allResults.push(await evaluatePromptStyle(client, style, testCases));
     }
 
-    // Final comparison
     if (allResults.length > 1) {
         console.log('\n' + '='.repeat(60));
         console.log('COMPARISON');
@@ -411,8 +298,7 @@ async function main() {
         for (const r of allResults) {
             console.log(`${r.style.padEnd(13)} ${String(r.passedCount).padStart(2)}/${testCases.length}     ${r.avgF1.toFixed(3)}    ${r.totalInputTokens}`);
         }
-        console.log();
-        console.log(`WINNER: ${allResults[0].style} (F1=${allResults[0].avgF1.toFixed(3)})`);
+        console.log(`\nWINNER: ${allResults[0].style} (F1=${allResults[0].avgF1.toFixed(3)})`);
     }
 }
 

@@ -8,11 +8,13 @@ vi.mock('@anthropic-ai/sdk', () => ({
 
 const { POST } = await import('./route');
 
-function post(body: unknown) {
+let ipCounter = 0;
+function post(body: unknown, ip = `10.0.0.${++ipCounter}`) {
   return POST(
     new NextRequest('http://localhost/api/filter', {
       method: 'POST',
-      body: JSON.stringify(body),
+      body: typeof body === 'string' ? body : JSON.stringify(body),
+      headers: { 'x-forwarded-for': ip },
     })
   );
 }
@@ -38,6 +40,24 @@ describe('POST /api/filter', () => {
   it('returns empty indices when places is missing', async () => {
     const res = await post({ userQuery: 'coffee' });
     expect(await res.json()).toEqual({ filteredIndices: [] });
+  });
+
+  it('rejects oversized or malformed bodies with 400 before calling Claude', async () => {
+    const many = Array.from({ length: 21 }, () => ({ name: 'A' }));
+    expect((await post({ userQuery: 'coffee', places: many })).status).toBe(400);
+    expect((await post({ places })).status).toBe(400);
+    expect((await post('not json')).status).toBe(400);
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it('rate limits a single IP with 429', async () => {
+    mockCreate.mockResolvedValue({ content: [{ type: 'text', text: '0]' }] });
+    const statuses = [];
+    for (let i = 0; i < 31; i++) {
+      statuses.push((await post({ userQuery: 'coffee', places }, '192.168.1.1')).status);
+    }
+    expect(statuses.slice(0, 30).every((s) => s === 200)).toBe(true);
+    expect(statuses[30]).toBe(429);
   });
 
   it('sends the query and places to Claude with a JSON prefill and returns parsed indices', async () => {

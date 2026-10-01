@@ -33,7 +33,7 @@ Open http://localhost:3000. The filter endpoint is `POST /api/filter`.
 |----------|---------|-------------|
 | `ANTHROPIC_API_KEY` | — | Claude API key (server only) |
 | `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` | — | Google Maps key (exposed to the browser; restrict it by HTTP referrer) |
-| `PROMPT_STYLE` | `pattern` | Filter prompt style: `pattern`, `minimal`, `primary`, `verbose` |
+| `PROMPT_STYLE` | `primary` | Filter prompt style: `primary`, `pattern`, `minimal`, `verbose`, `fewshot`, `fewshot2` (compare with `npm run eval`) |
 
 ## Deployment
 

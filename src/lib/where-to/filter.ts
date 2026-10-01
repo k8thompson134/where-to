@@ -1,4 +1,10 @@
-export type FilterPromptStyle = 'pattern' | 'minimal' | 'primary' | 'verbose';
+export type FilterPromptStyle =
+  | 'pattern'
+  | 'minimal'
+  | 'primary'
+  | 'verbose'
+  | 'fewshot'
+  | 'fewshot2';
 
 export interface PlaceForFilter {
   name: string;
@@ -41,7 +47,28 @@ STRICT RULES - only include RETAIL STORES where you can BUY things:
 
 Return ONLY a JSON array of indices. No explanation, no text, just the array.
 Example: [0, 3]`,
+
+  fewshot: (query, placesList) => `${placesList}
+
+"${query}" → indices where PRIMARY purpose matches. Retail only.
+✓ Starbucks for "coffee" (coffee shop)
+✗ Panera for "coffee" (bakery-cafe)
+JSON:`,
+
+  fewshot2: (query, placesList) => `${placesList}
+
+"${query}" → JSON indices where this is the PRIMARY business purpose.
+✓ Include: Starbucks, Dunkin, Dutch Bros, Caribou (coffee chains)
+✓ Include: Costco, Sam's Club, Aldi (grocery/warehouse)
+✗ Exclude: Wawa, 7-Eleven (convenience stores)
+✗ Exclude: Panera, Denny's (restaurants)
+Indices:`,
 };
+
+// Chosen by `npm run eval`; fewshot2 scores higher but its examples name the eval's own chains.
+export const DEFAULT_PROMPT_STYLE: FilterPromptStyle = 'primary';
+
+export const FILTER_PROMPT_STYLES = Object.keys(prompts) as FilterPromptStyle[];
 
 /**
  * Build the numbered places list string for the filter prompt.
@@ -50,7 +77,7 @@ export function buildPlacesList(places: PlaceForFilter[]): string {
   return places
     .map(
       (p, i) =>
-        `${i}. ${p.name}${p.types ? ' - Types: ' + p.types.join(', ') : ''}`
+        `${i}. ${p.name}${p.types?.length ? ' - Types: ' + p.types.join(', ') : ''}`
     )
     .join('\n');
 }
@@ -63,7 +90,7 @@ export function buildFilterPrompt(
   userQuery: string,
   placesList: string
 ): string {
-  const fn = prompts[style] ?? prompts.pattern;
+  const fn = prompts[style] ?? prompts[DEFAULT_PROMPT_STYLE];
   let prompt = fn(userQuery, placesList);
   if (prompt.trim().endsWith('[')) {
     prompt = prompt.trim().slice(0, -1).trim();

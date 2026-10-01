@@ -8,23 +8,28 @@ import {
   getGoogleMapsLink as buildGoogleMapsLink,
   validateSearchParams,
   sortCombinationsByPathDistance,
+  mapsErrorMessage,
+  mapWithConcurrency,
+  filterByDistance,
 } from '@/lib/where-to';
 import styles from './WhereToApp.module.scss';
 
 const API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '';
+const MAX_ROUTES_TO_TEST = 10;
+const ROUTE_CONCURRENCY = 4;
 
 // Text Search results carry formatted_address; only Nearby Search fills vicinity.
 const addressOf = (p: google.maps.places.PlaceResult) => p.vicinity ?? p.formatted_address;
 
+const toPoint = (l: google.maps.LatLng) => ({ lat: l.lat(), lng: l.lng() });
+
 interface PlaceOption {
     name: string;
     vicinity: string;
-    geometry: google.maps.places.PlaceGeometry;
-    place_id: string;
+    location: google.maps.LatLng;
 }
 
 interface WaypointData {
-    id: number;
     value: string;
     options: PlaceOption[];
 }
@@ -35,9 +40,23 @@ interface RouteResult {
     duration: number; // in seconds
 }
 
+type MapStatus = 'loading' | 'ready' | 'error';
+
+class MapsStatusError extends Error {
+    constructor(readonly status: string) {
+        super(mapsErrorMessage(status) ?? status);
+    }
+}
+
+declare global {
+    interface Window {
+        gm_authFailure?: () => void;
+    }
+}
+
 export default function WhereToApp() {
     const mapRef = useRef<HTMLDivElement>(null);
-    const [googleInfo, setGoogleInfo] = useState<{ maps: google.maps.MapsLibrary & { places: google.maps.PlacesLibrary } } | null>(null);
+    const [mapStatus, setMapStatus] = useState<MapStatus>('loading');
     const [mapInstance, setMapInstance] = useState<google.maps.Map | null>(null);
 
     // Form State
@@ -52,6 +71,7 @@ export default function WhereToApp() {
     // App State
     const [isSearching, setIsSearching] = useState(false);
     const [statusMessage, setStatusMessage] = useState('');
+    const [error, setError] = useState<string | null>(null);
     const [results, setResults] = useState<RouteResult[]>([]);
     const [selectedIndex, setSelectedIndex] = useState(0);
 
@@ -59,33 +79,30 @@ export default function WhereToApp() {
     const directionsService = useRef<google.maps.DirectionsService | null>(null);
     const directionsRenderer = useRef<google.maps.DirectionsRenderer | null>(null);
     const placesService = useRef<google.maps.places.PlacesService | null>(null);
+    const geocoder = useRef<google.maps.Geocoder | null>(null);
 
-    // Starting place object (for geometry)
+    // Place picked from autocomplete; cleared when the user edits the text so it can't go stale.
     const startPlaceRef = useRef<google.maps.places.PlaceResult | null>(null);
     const endPlaceRef = useRef<google.maps.places.PlaceResult | null>(null);
 
     const mapInitRef = useRef(false);
     const acStartRef = useRef<google.maps.places.Autocomplete | null>(null);
-    const acEndRef = useRef<google.maps.places.Autocomplete | null>(null);
 
-    // Load Google Maps API using new functional API
     useEffect(() => {
         if (mapInitRef.current) return;
         mapInitRef.current = true;
 
+        // Google calls this (instead of rejecting) when the key is invalid or the referrer isn't allowed.
+        window.gm_authFailure = () => setMapStatus('error');
+
         const loadMaps = async () => {
             try {
-                // Set options for the loader
-                setOptions({
-                    key: API_KEY,
-                    v: "weekly",
-                });
+                setOptions({ key: API_KEY, v: "weekly" });
 
-                // Import required libraries
                 const mapsLib = await importLibrary("maps") as google.maps.MapsLibrary;
-                const placesLib = await importLibrary("places") as google.maps.PlacesLibrary;
-
-                setGoogleInfo({ maps: { ...mapsLib, places: placesLib } });
+                await importLibrary("places");
+                await importLibrary("geocoding");
+                await importLibrary("routes");
 
                 if (mapRef.current) {
                     const map = new mapsLib.Map(mapRef.current, {
@@ -100,9 +117,12 @@ export default function WhereToApp() {
                     directionsRenderer.current = new google.maps.DirectionsRenderer();
                     directionsRenderer.current.setMap(map);
                     placesService.current = new google.maps.places.PlacesService(map);
+                    geocoder.current = new google.maps.Geocoder();
+                    setMapStatus('ready');
                 }
             } catch (e) {
                 console.error("Error loading Google Maps", e);
+                setMapStatus('error');
             }
         };
 
@@ -114,8 +134,8 @@ export default function WhereToApp() {
 
     // Start autocomplete — attach once
     useEffect(() => {
-        if (!googleInfo || !mapInstance || acStartRef.current || !startInputRef.current) return;
-        const ac = new googleInfo.maps.places.Autocomplete(startInputRef.current);
+        if (!mapInstance || acStartRef.current || !startInputRef.current) return;
+        const ac = new google.maps.places.Autocomplete(startInputRef.current);
         acStartRef.current = ac;
         ac.addListener('place_changed', () => {
             const place = ac.getPlace();
@@ -126,19 +146,18 @@ export default function WhereToApp() {
                 mapInstance.setZoom(12);
             }
         });
-    }, [googleInfo, mapInstance]);
+    }, [mapInstance]);
 
     // End autocomplete — re-attach whenever end input becomes visible
     useEffect(() => {
-        if (!googleInfo || !mapInstance || sameStartEnd || !endInputRef.current) return;
-        const ac = new googleInfo.maps.places.Autocomplete(endInputRef.current);
-        acEndRef.current = ac;
+        if (!mapInstance || sameStartEnd || !endInputRef.current) return;
+        const ac = new google.maps.places.Autocomplete(endInputRef.current);
         ac.addListener('place_changed', () => {
             const place = ac.getPlace();
             endPlaceRef.current = place;
             setEndQuery(place.formatted_address || place.name || '');
         });
-    }, [googleInfo, mapInstance, sameStartEnd]);
+    }, [mapInstance, sameStartEnd]);
 
     const addWaypoint = () => {
         setWaypoints([...waypoints, { id: Date.now(), value: '' }]);
@@ -155,7 +174,8 @@ export default function WhereToApp() {
     // --- CORE LOGIC ---
 
     const handleSearch = async () => {
-        if (!mapInstance || !placesService.current) return;
+        if (mapStatus !== 'ready') return;
+        setError(null);
 
         const validation = validateSearchParams({
             startQuery,
@@ -164,215 +184,145 @@ export default function WhereToApp() {
             waypoints,
         });
         if (!validation.valid) {
-            alert(validation.error);
+            setError(validation.error ?? 'Please check the form.');
             return;
         }
 
         const activeWaypoints = waypoints.filter((w) => w.value.trim().length > 0);
 
         setIsSearching(true);
-        setStatusMessage("Searching for places...");
+        setStatusMessage("Finding your start and end...");
 
         try {
-            const waypointOptions: WaypointData[] = [];
+            const startLoc = await resolveLocation(startQuery, startPlaceRef.current, 'starting location');
+            const endLoc = sameStartEnd
+                ? startLoc
+                : await resolveLocation(endQuery, endPlaceRef.current, 'ending location');
 
-            // 1. Search for places for each waypoint query
+            // Search around the midpoint, wide enough to cover both ends: half the distance + 10km, clamped to 10–50km.
+            const center = new google.maps.LatLng(
+                (startLoc.lat() + endLoc.lat()) / 2,
+                (startLoc.lng() + endLoc.lng()) / 2
+            );
+            const distanceM = getDistanceFromLatLonInM(startLoc.lat(), startLoc.lng(), endLoc.lat(), endLoc.lng());
+            const radius = Math.min(50000, Math.max(10000, distanceM / 2 + 10000));
+
+            const waypointOptions: WaypointData[] = [];
             for (const wp of activeWaypoints) {
                 setStatusMessage(`Searching for "${wp.value}"...`);
-                const options = await searchForPlace(wp.value);
-                waypointOptions.push({
-                    id: wp.id,
-                    value: wp.value,
-                    options: options
-                });
+                const options = await searchForPlace(wp.value, center, radius);
+                if (options.length === 0) {
+                    throw new Error(`No "${wp.value}" found near your route. Try a different word for that stop.`);
+                }
+                waypointOptions.push({ value: wp.value, options });
             }
 
-            // 2. Route Optimization
             setStatusMessage("Calculating best route...");
-            const finalEnd = sameStartEnd ? startQuery : endQuery;
-            await findBestRoute(startQuery, finalEnd, waypointOptions);
-
-        } catch (error: unknown) {
-            console.error(error);
-            alert("An error occurred: " + (error instanceof Error ? error.message : String(error)));
+            await findBestRoute(startLoc, endLoc, waypointOptions);
+        } catch (e: unknown) {
+            console.warn(e);
+            setError(e instanceof Error ? e.message : String(e));
         } finally {
             setIsSearching(false);
             setStatusMessage("");
         }
     };
 
-    const searchForPlace = (query: string): Promise<PlaceOption[]> => {
-        return new Promise((resolve) => {
-            const startLoc = startPlaceRef.current?.geometry?.location;
-            const endLoc = sameStartEnd ? startLoc : endPlaceRef.current?.geometry?.location;
-
-            let searchLocation = startLoc;
-            let searchRadius = 50000; // default 50km
-
-            if (startLoc && endLoc) {
-                // Calculate midpoint
-                const lat1 = startLoc.lat();
-                const lng1 = startLoc.lng();
-                const lat2 = endLoc.lat();
-                const lng2 = endLoc.lng();
-
-                searchLocation = new google.maps.LatLng((lat1 + lat2) / 2, (lng1 + lng2) / 2);
-
-                const distanceM = getDistanceFromLatLonInM(lat1, lng1, lat2, lng2);
-                // Radius is half the distance plus a 10km buffer, max 50km minimum 10km
-                searchRadius = Math.min(50000, Math.max(10000, (distanceM / 2) + 10000));
-            }
-
-            const callback = async (results: google.maps.places.PlaceResult[] | null, status: `${google.maps.places.PlacesServiceStatus}`) => {
-                if (status === 'OK' && results && results.length > 0) {
-                    // LLM Filtering
-                    const candidates = results.slice(0, 15);
-                    try {
-                        // We need to map options to a serializable format for the API
-                        const serializablePlaces = candidates.map(p => ({
-                            name: p.name,
-                            types: p.types,
-                            vicinity: addressOf(p)
-                        }));
-
-                        const apiRes = await fetch('/api/filter', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ userQuery: query, places: serializablePlaces })
-                        });
-
-                        const data = await apiRes.json();
-                        const indices: number[] = data.filteredIndices || [];
-
-                        // If filter returns empty, fallback to top 5 original
-                        const finalIndices = indices.length > 0 ? indices : [0, 1, 2, 3, 4];
-
-                        const filtered = finalIndices
-                            .map(i => candidates[i])
-                            .filter((p): p is google.maps.places.PlaceResult =>
-                                p !== undefined &&
-                                !!p.geometry?.location &&
-                                !!p.name &&
-                                !!addressOf(p)
-                            )
-                            .map(p => ({
-                                name: p.name!,
-                                vicinity: addressOf(p)!,
-                                geometry: p.geometry!,
-                                place_id: p.place_id ?? ''
-                            }));
-
-                        resolve(filtered.slice(0, 5));
-                    } catch (e) {
-                        console.error("LLM Filter failed", e);
-                        // Fallback
-                        const fallback = candidates
-                            .filter((p): p is google.maps.places.PlaceResult =>
-                                !!p.geometry?.location && !!p.name && !!addressOf(p)
-                            )
-                            .slice(0, 5)
-                            .map(p => ({
-                                name: p.name!,
-                                vicinity: addressOf(p)!,
-                                geometry: p.geometry!,
-                                place_id: p.place_id ?? ''
-                            }));
-                        resolve(fallback);
-                    }
-                } else {
-                    resolve([]);
-                }
-            };
-
-            if (searchLocation) {
-                placesService.current!.textSearch({
-                    location: searchLocation,
-                    radius: searchRadius,
-                    query: query
-                }, callback);
-            } else {
-                placesService.current!.textSearch({ query }, callback);
-            }
+    const resolveLocation = (
+        text: string,
+        picked: google.maps.places.PlaceResult | null,
+        label: string
+    ): Promise<google.maps.LatLng> => {
+        if (picked?.geometry?.location) return Promise.resolve(picked.geometry.location);
+        return new Promise((resolve, reject) => {
+            geocoder.current!.geocode({ address: text }, (res, status) => {
+                const location = res?.[0]?.geometry.location;
+                if (status === 'OK' && location) resolve(location);
+                else reject(mapsErrorMessage(status)
+                    ? new MapsStatusError(status)
+                    : new Error(`Couldn't find your ${label} "${text}". Try picking it from the suggestions.`));
+            });
         });
     };
 
-    const findBestRoute = async (start: string, end: string, waypointData: WaypointData[]) => {
-        // Check if any waypoint has no options
-        for (const wp of waypointData) {
-            if (wp.options.length === 0) {
-                throw new Error(`Could not find any places for: ${wp.value}`);
-            }
-        }
-
-        const optionArrays: PlaceOption[][] = waypointData.map((wp) => wp.options);
-        let combinations: PlaceOption[][] = generateCombinations(optionArrays);
-
-        console.log(`Testing ${combinations.length} initial combinations`);
-
-        const startLoc = startPlaceRef.current?.geometry?.location;
-        const endLoc = sameStartEnd ? startLoc : endPlaceRef.current?.geometry?.location;
-
-        if (startLoc && endLoc) {
-            const startPoint = { lat: startLoc.lat(), lng: startLoc.lng() };
-            const endPoint = { lat: endLoc.lat(), lng: endLoc.lng() };
-            const getPoint = (p: PlaceOption) => ({
-                lat: p.geometry?.location?.lat() ?? 0,
-                lng: p.geometry?.location?.lng() ?? 0,
+    const textSearch = (query: string, center: google.maps.LatLng, radius: number) =>
+        new Promise<google.maps.places.PlaceResult[]>((resolve, reject) => {
+            placesService.current!.textSearch({ location: center, radius, query }, (res, status) => {
+                if (status === 'OK' && res) resolve(res);
+                else if (mapsErrorMessage(status)) reject(new MapsStatusError(status));
+                else resolve([]);
             });
-            combinations = sortCombinationsByPathDistance(
-                startPoint,
-                endPoint,
-                combinations,
-                getPoint
-            );
+        });
+
+    const searchForPlace = async (query: string, center: google.maps.LatLng, radius: number): Promise<PlaceOption[]> => {
+        const found = (await textSearch(query, center, radius))
+            .filter(p => !!p.geometry?.location && !!p.name && !!addressOf(p))
+            .map(p => ({ name: p.name!, vicinity: addressOf(p)!, location: p.geometry!.location!, types: p.types }));
+
+        // Location/radius only bias text search, so drop matches well outside the search area.
+        const candidates = filterByDistance(found, toPoint(center), radius * 1.5, p => toPoint(p.location)).slice(0, 15);
+        if (candidates.length === 0) return [];
+
+        let indices: number[] = [];
+        try {
+            const apiRes = await fetch('/api/filter', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    userQuery: query,
+                    places: candidates.map(p => ({ name: p.name, types: p.types, vicinity: p.vicinity })),
+                }),
+            });
+            const data = await apiRes.json();
+            if (!apiRes.ok) console.warn(`[filter] ${apiRes.status}: ${data.error}; using unfiltered results`);
+            indices = data.filteredIndices ?? [];
+        } catch (e) {
+            console.warn("[filter] request failed; using unfiltered results", e);
         }
 
-        combinations = combinations
-            .filter(combo => combo.every(place => !!place.geometry?.location))
-            .slice(0, 10);
+        // An empty or failed filter falls back to the closest-ranked results rather than blocking the search.
+        const chosen = indices.length > 0 ? indices.map(i => candidates[i]).filter(Boolean) : candidates;
+        return chosen.slice(0, 5).map(({ name, vicinity, location }) => ({ name, vicinity, location }));
+    };
 
-        const allResults: RouteResult[] = [];
+    const routeFor = (origin: google.maps.LatLng, destination: google.maps.LatLng, combo: PlaceOption[]) =>
+        new Promise<RouteResult>((resolve, reject) => {
+            directionsService.current!.route({
+                origin,
+                destination,
+                waypoints: combo.map(place => ({ location: place.location, stopover: true })),
+                optimizeWaypoints: true,
+                travelMode: google.maps.TravelMode.DRIVING
+            }, (res, status) => {
+                if (status !== 'OK' || !res) return reject(new MapsStatusError(status));
+                const duration = res.routes[0].legs.reduce((sum, leg) => sum + (leg.duration?.value ?? 0), 0);
+                resolve({ response: res, places: combo, duration });
+            });
+        });
 
-        for (const combo of combinations) {
-            const waypts = combo.map(place => ({
-                location: place.geometry.location!,
-                stopover: true
-            }));
+    const findBestRoute = async (start: google.maps.LatLng, end: google.maps.LatLng, waypointData: WaypointData[]) => {
+        const combinations = sortCombinationsByPathDistance(
+            toPoint(start),
+            toPoint(end),
+            generateCombinations(waypointData.map((wp) => wp.options)),
+            p => toPoint(p.location)
+        ).slice(0, MAX_ROUTES_TO_TEST);
 
-            try {
-                const dirResult = await new Promise<google.maps.DirectionsResult>((resolve, reject) => {
-                    directionsService.current!.route({
-                        origin: start,
-                        destination: end,
-                        waypoints: waypts,
-                        optimizeWaypoints: true,
-                        travelMode: 'DRIVING' as google.maps.TravelMode
-                    }, (res, status) => {
-                        if (status === 'OK' && res) resolve(res);
-                        else reject(status);
-                    });
-                });
+        const settled = await mapWithConcurrency(combinations, ROUTE_CONCURRENCY, combo => routeFor(start, end, combo));
+        const routes = settled.flatMap(r => r.status === 'fulfilled' ? [r.value] : []);
 
-                let duration = 0;
-                dirResult.routes[0].legs.forEach(leg => duration += leg.duration?.value || 0);
-                allResults.push({ response: dirResult, places: combo, duration });
-            } catch (e) {
-                console.warn("Route failed", e);
-            }
+        if (routes.length === 0) {
+            const failure = settled.find(r => r.status === 'rejected');
+            const status = failure?.status === 'rejected' && failure.reason instanceof MapsStatusError ? failure.reason.status : '';
+            throw new Error(mapsErrorMessage(status) ?? "Couldn't find a drivable route between these stops.");
         }
 
-        allResults.sort((a, b) => a.duration - b.duration);
-        const topResults = allResults.slice(0, 3);
-
-        if (topResults.length > 0) {
-            setResults(topResults);
-            setSelectedIndex(0);
-            if (directionsRenderer.current) {
-                directionsRenderer.current.setMap(mapInstance);
-                directionsRenderer.current.setDirections(topResults[0].response);
-            }
-        } else {
-            throw new Error("Could not calculate any valid route.");
+        const topResults = routes.sort((a, b) => a.duration - b.duration).slice(0, 3);
+        setResults(topResults);
+        setSelectedIndex(0);
+        if (directionsRenderer.current) {
+            directionsRenderer.current.setMap(mapInstance);
+            directionsRenderer.current.setDirections(topResults[0].response);
         }
     };
 
@@ -407,16 +357,20 @@ export default function WhereToApp() {
             <div className={styles.panel}>
                 {results.length === 0 ? (
                     <>
-                        <h2 className={styles.title}>Where To?</h2>
-                        <p className={styles.subtitle}>Plan your errand run.</p>
+                        {mapStatus === 'error' && (
+                            <p className={styles.error} role="alert">
+                                Google Maps couldn&apos;t load, so search is unavailable right now. Try refreshing the page.
+                            </p>
+                        )}
 
                         <div className={styles.formGroup}>
-                            <label className={styles.label}>Starting Location:</label>
+                            <label className={styles.label} htmlFor="startLocation">Starting Location:</label>
                             <input
+                                id="startLocation"
                                 ref={startInputRef}
                                 className={styles.input}
                                 value={startQuery}
-                                onChange={(e) => setStartQuery(e.target.value)}
+                                onChange={(e) => { startPlaceRef.current = null; setStartQuery(e.target.value); }}
                                 placeholder="Enter a location"
                             />
                             <div className={styles.checkboxGroup}>
@@ -432,12 +386,13 @@ export default function WhereToApp() {
 
                         {!sameStartEnd && (
                             <div className={styles.formGroup}>
-                                <label className={styles.label}>Ending Location:</label>
+                                <label className={styles.label} htmlFor="endLocation">Ending Location:</label>
                                 <input
+                                    id="endLocation"
                                     ref={endInputRef}
                                     className={styles.input}
                                     value={endQuery}
-                                    onChange={(e) => setEndQuery(e.target.value)}
+                                    onChange={(e) => { endPlaceRef.current = null; setEndQuery(e.target.value); }}
                                     placeholder="Enter a location"
                                 />
                             </div>
@@ -447,9 +402,10 @@ export default function WhereToApp() {
 
                         {waypoints.map((wp, index) => (
                             <div key={wp.id} className={styles.formGroup}>
-                                <label className={styles.label}>Location {index + 1}</label>
+                                <label className={styles.label} htmlFor={`stop-${wp.id}`}>Location {index + 1}</label>
                                 <div className={styles.stopRow}>
                                     <input
+                                        id={`stop-${wp.id}`}
                                         className={styles.input}
                                         value={wp.value}
                                         onChange={(e) => updateWaypoint(wp.id, e.target.value)}
@@ -459,6 +415,7 @@ export default function WhereToApp() {
                                         <button
                                             onClick={() => removeWaypoint(wp.id)}
                                             className={styles.removeBtn}
+                                            aria-label={`Remove location ${index + 1}`}
                                         >
                                             ✕
                                         </button>
@@ -471,8 +428,10 @@ export default function WhereToApp() {
                             Add Location
                         </button>
 
-                        <button className={styles.button} onClick={handleSearch} disabled={isSearching}>
-                            {isSearching ? 'Searching...' : 'Search'}
+                        {error && <p className={styles.error} role="alert">{error}</p>}
+
+                        <button className={styles.button} onClick={handleSearch} disabled={isSearching || mapStatus !== 'ready'}>
+                            {mapStatus === 'loading' ? 'Loading map...' : isSearching ? 'Searching...' : 'Search'}
                         </button>
                     </>
                 ) : (

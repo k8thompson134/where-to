@@ -320,3 +320,13 @@ $accent-color: #6B9DC2; // Brighter Earthy Blue
     color: $text-primary;
     background: rgba($accent-color, 0.1);
 }
+.error {
+    font-family: var(--font-body), 'Quicksand', sans-serif;
+    font-size: 0.85rem;
+    color: $text-primary;
+    background: rgba($led-red, 0.12);
+    border: 1px solid rgba($led-red, 0.5);
+    border-radius: $radius-md;
+    padding: $space-3;
+    margin-bottom: $space-4;
+}
