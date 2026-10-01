@@ -15,11 +15,10 @@ import {
 import styles from './WhereToApp.module.scss';
 
 const API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '';
+// Route waypoint markers are Advanced Markers, which require a map ID.
+const MAP_ID = process.env.NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID || 'DEMO_MAP_ID';
 const MAX_ROUTES_TO_TEST = 10;
 const ROUTE_CONCURRENCY = 4;
-
-// Text Search results carry formatted_address; only Nearby Search fills vicinity.
-const addressOf = (p: google.maps.places.PlaceResult) => p.vicinity ?? p.formatted_address;
 
 const toPoint = (l: google.maps.LatLng) => ({ lat: l.lat(), lng: l.lng() });
 
@@ -35,8 +34,8 @@ interface WaypointData {
 }
 
 interface RouteResult {
-    response: google.maps.DirectionsResult;
-    places: PlaceOption[];
+    route: google.maps.routes.Route;
+    places: PlaceOption[]; // in visiting order
     duration: number; // in seconds
 }
 
@@ -48,10 +47,57 @@ class MapsStatusError extends Error {
     }
 }
 
+// Places (New) and Routes throw MapsRequestError carrying an RPC code; turn it into a user-facing error.
+const asMapsError = (e: unknown) =>
+    e instanceof google.maps.MapsRequestError && e.code ? new MapsStatusError(e.code) : e;
+
 declare global {
     interface Window {
         gm_authFailure?: () => void;
     }
+}
+
+interface PlaceInputProps {
+    id: string;
+    ready: boolean;
+    value: string;
+    onChange: (text: string, location: google.maps.LatLng | null) => void;
+}
+
+/** Google's PlaceAutocompleteElement, mounted imperatively since it's a web component. */
+function PlaceInput({ id, ready, value, onChange }: PlaceInputProps) {
+    const hostRef = useRef<HTMLDivElement>(null);
+    const onChangeRef = useRef(onChange);
+    // The element owns its text after mount; this restores it when the form is shown again.
+    const valueRef = useRef(value);
+
+    useEffect(() => {
+        onChangeRef.current = onChange;
+        valueRef.current = value;
+    }, [onChange, value]);
+
+    useEffect(() => {
+        if (!ready || !hostRef.current) return;
+        const el = new google.maps.places.PlaceAutocompleteElement({ placeholder: 'Enter a location' });
+        el.id = id;
+        el.className = styles.placeAutocomplete;
+        el.value = valueRef.current;
+        // Typing clears any previously picked place so a stale location can't be used.
+        el.addEventListener('input', () => onChangeRef.current(el.value, null));
+        el.addEventListener('gmp-select', async (event) => {
+            const place = event.placePrediction.toPlace();
+            await place.fetchFields({ fields: ['displayName', 'formattedAddress', 'location'] });
+            onChangeRef.current(place.formattedAddress ?? place.displayName ?? el.value, place.location ?? null);
+        });
+        hostRef.current.appendChild(el);
+        return () => el.remove();
+    }, [ready, id]);
+
+    return (
+        <div ref={hostRef}>
+            {!ready && <input id={id} className={styles.input} placeholder="Enter a location" disabled />}
+        </div>
+    );
 }
 
 export default function WhereToApp() {
@@ -75,18 +121,14 @@ export default function WhereToApp() {
     const [results, setResults] = useState<RouteResult[]>([]);
     const [selectedIndex, setSelectedIndex] = useState(0);
 
-    // Services
-    const directionsService = useRef<google.maps.DirectionsService | null>(null);
-    const directionsRenderer = useRef<google.maps.DirectionsRenderer | null>(null);
-    const placesService = useRef<google.maps.places.PlacesService | null>(null);
     const geocoder = useRef<google.maps.Geocoder | null>(null);
+    const rendered = useRef<{ polylines: google.maps.Polyline[]; markers: google.maps.marker.AdvancedMarkerElement[] }>({ polylines: [], markers: [] });
 
-    // Place picked from autocomplete; cleared when the user edits the text so it can't go stale.
-    const startPlaceRef = useRef<google.maps.places.PlaceResult | null>(null);
-    const endPlaceRef = useRef<google.maps.places.PlaceResult | null>(null);
+    // Location of a place picked from the suggestions; null when the text was typed or edited.
+    const startLocRef = useRef<google.maps.LatLng | null>(null);
+    const endLocRef = useRef<google.maps.LatLng | null>(null);
 
     const mapInitRef = useRef(false);
-    const acStartRef = useRef<google.maps.places.Autocomplete | null>(null);
 
     useEffect(() => {
         if (mapInitRef.current) return;
@@ -100,23 +142,22 @@ export default function WhereToApp() {
                 setOptions({ key: API_KEY, v: "weekly" });
 
                 const mapsLib = await importLibrary("maps") as google.maps.MapsLibrary;
-                await importLibrary("places");
-                await importLibrary("geocoding");
-                await importLibrary("routes");
+                await Promise.all([
+                    importLibrary("places"),
+                    importLibrary("geocoding"),
+                    importLibrary("routes"),
+                    importLibrary("marker"),
+                ]);
 
                 if (mapRef.current) {
                     const map = new mapsLib.Map(mapRef.current, {
                         center: { lat: 39.50, lng: -98.35 },
                         zoom: 4,
+                        mapId: MAP_ID,
                         mapTypeControl: false,
                         streetViewControl: false
                     });
                     setMapInstance(map);
-
-                    directionsService.current = new google.maps.DirectionsService();
-                    directionsRenderer.current = new google.maps.DirectionsRenderer();
-                    directionsRenderer.current.setMap(map);
-                    placesService.current = new google.maps.places.PlacesService(map);
                     geocoder.current = new google.maps.Geocoder();
                     setMapStatus('ready');
                 }
@@ -129,35 +170,19 @@ export default function WhereToApp() {
         loadMaps();
     }, []);
 
-    const startInputRef = useRef<HTMLInputElement>(null);
-    const endInputRef = useRef<HTMLInputElement>(null);
+    const handleStartChange = (text: string, location: google.maps.LatLng | null) => {
+        setStartQuery(text);
+        startLocRef.current = location;
+        if (location && mapInstance) {
+            mapInstance.setCenter(location);
+            mapInstance.setZoom(12);
+        }
+    };
 
-    // Start autocomplete — attach once
-    useEffect(() => {
-        if (!mapInstance || acStartRef.current || !startInputRef.current) return;
-        const ac = new google.maps.places.Autocomplete(startInputRef.current);
-        acStartRef.current = ac;
-        ac.addListener('place_changed', () => {
-            const place = ac.getPlace();
-            startPlaceRef.current = place;
-            setStartQuery(place.formatted_address || place.name || '');
-            if (place.geometry?.location) {
-                mapInstance.setCenter(place.geometry.location);
-                mapInstance.setZoom(12);
-            }
-        });
-    }, [mapInstance]);
-
-    // End autocomplete — re-attach whenever end input becomes visible
-    useEffect(() => {
-        if (!mapInstance || sameStartEnd || !endInputRef.current) return;
-        const ac = new google.maps.places.Autocomplete(endInputRef.current);
-        ac.addListener('place_changed', () => {
-            const place = ac.getPlace();
-            endPlaceRef.current = place;
-            setEndQuery(place.formatted_address || place.name || '');
-        });
-    }, [mapInstance, sameStartEnd]);
+    const handleEndChange = (text: string, location: google.maps.LatLng | null) => {
+        setEndQuery(text);
+        endLocRef.current = location;
+    };
 
     const addWaypoint = () => {
         setWaypoints([...waypoints, { id: Date.now(), value: '' }]);
@@ -194,10 +219,10 @@ export default function WhereToApp() {
         setStatusMessage("Finding your start and end...");
 
         try {
-            const startLoc = await resolveLocation(startQuery, startPlaceRef.current, 'starting location');
+            const startLoc = await resolveLocation(startQuery, startLocRef.current, 'starting location');
             const endLoc = sameStartEnd
                 ? startLoc
-                : await resolveLocation(endQuery, endPlaceRef.current, 'ending location');
+                : await resolveLocation(endQuery, endLocRef.current, 'ending location');
 
             // Search around the midpoint, wide enough to cover both ends: half the distance + 10km, clamped to 10–50km.
             const center = new google.maps.LatLng(
@@ -230,10 +255,10 @@ export default function WhereToApp() {
 
     const resolveLocation = (
         text: string,
-        picked: google.maps.places.PlaceResult | null,
+        picked: google.maps.LatLng | null,
         label: string
     ): Promise<google.maps.LatLng> => {
-        if (picked?.geometry?.location) return Promise.resolve(picked.geometry.location);
+        if (picked) return Promise.resolve(picked);
         return new Promise((resolve, reject) => {
             geocoder.current!.geocode({ address: text }, (res, status) => {
                 const location = res?.[0]?.geometry.location;
@@ -245,21 +270,26 @@ export default function WhereToApp() {
         });
     };
 
-    const textSearch = (query: string, center: google.maps.LatLng, radius: number) =>
-        new Promise<google.maps.places.PlaceResult[]>((resolve, reject) => {
-            placesService.current!.textSearch({ location: center, radius, query }, (res, status) => {
-                if (status === 'OK' && res) resolve(res);
-                else if (mapsErrorMessage(status)) reject(new MapsStatusError(status));
-                else resolve([]);
-            });
-        });
-
     const searchForPlace = async (query: string, center: google.maps.LatLng, radius: number): Promise<PlaceOption[]> => {
-        const found = (await textSearch(query, center, radius))
-            .filter(p => !!p.geometry?.location && !!p.name && !!addressOf(p))
-            .map(p => ({ name: p.name!, vicinity: addressOf(p)!, location: p.geometry!.location!, types: p.types }));
+        let places: google.maps.places.Place[];
+        try {
+            ({ places } = await google.maps.places.Place.searchByText({
+                textQuery: query,
+                fields: ['displayName', 'formattedAddress', 'location', 'types'],
+                locationBias: { center, radius },
+                maxResultCount: 20,
+            }));
+        } catch (e) {
+            const err = asMapsError(e);
+            if (err instanceof MapsStatusError && !mapsErrorMessage(err.status)) return [];
+            throw err;
+        }
 
-        // Location/radius only bias text search, so drop matches well outside the search area.
+        const found = places.flatMap(p => p.location && p.displayName && p.formattedAddress
+            ? [{ name: p.displayName, vicinity: p.formattedAddress, location: p.location, types: p.types }]
+            : []);
+
+        // locationBias only biases text search, so drop matches well outside the search area.
         const candidates = filterByDistance(found, toPoint(center), radius * 1.5, p => toPoint(p.location)).slice(0, 15);
         if (candidates.length === 0) return [];
 
@@ -285,20 +315,48 @@ export default function WhereToApp() {
         return chosen.slice(0, 5).map(({ name, vicinity, location }) => ({ name, vicinity, location }));
     };
 
-    const routeFor = (origin: google.maps.LatLng, destination: google.maps.LatLng, combo: PlaceOption[]) =>
-        new Promise<RouteResult>((resolve, reject) => {
-            directionsService.current!.route({
+    const routeFor = async (origin: google.maps.LatLng, destination: google.maps.LatLng, combo: PlaceOption[]): Promise<RouteResult> => {
+        let routes: google.maps.routes.Route[] | undefined;
+        try {
+            ({ routes } = await google.maps.routes.Route.computeRoutes({
                 origin,
                 destination,
-                waypoints: combo.map(place => ({ location: place.location, stopover: true })),
-                optimizeWaypoints: true,
-                travelMode: google.maps.TravelMode.DRIVING
-            }, (res, status) => {
-                if (status !== 'OK' || !res) return reject(new MapsStatusError(status));
-                const duration = res.routes[0].legs.reduce((sum, leg) => sum + (leg.duration?.value ?? 0), 0);
-                resolve({ response: res, places: combo, duration });
-            });
-        });
+                intermediates: combo.map(place => ({ location: place.location })),
+                optimizeWaypointOrder: combo.length > 1,
+                travelMode: 'DRIVING',
+                fields: ['durationMillis', 'legs', 'optimizedIntermediateWaypointIndices', 'path', 'viewport'],
+            }));
+        } catch (e) {
+            throw asMapsError(e);
+        }
+        const route = routes?.[0];
+        if (!route) throw new MapsStatusError('ZERO_RESULTS');
+        const order = route.optimizedIntermediateWaypointIndices;
+        return {
+            route,
+            places: order?.length === combo.length ? order.map(i => combo[i]) : combo,
+            duration: (route.durationMillis ?? 0) / 1000,
+        };
+    };
+
+    const clearRoute = () => {
+        rendered.current.polylines.forEach(p => p.setMap(null));
+        rendered.current.markers.forEach(m => { m.map = null; });
+        rendered.current = { polylines: [], markers: [] };
+    };
+
+    const showRoute = async (route: google.maps.routes.Route) => {
+        if (!mapInstance) return;
+        clearRoute();
+        const polylines = route.createPolylines();
+        polylines.forEach(p => p.setMap(mapInstance));
+        rendered.current.polylines = polylines;
+        if (route.viewport) mapInstance.fitBounds(route.viewport);
+        const markers = await route.createWaypointAdvancedMarkers({ map: mapInstance });
+        // A newer route may have been drawn while these markers were being created.
+        if (rendered.current.polylines === polylines) rendered.current.markers = markers;
+        else markers.forEach(m => { m.map = null; });
+    };
 
     const findBestRoute = async (start: google.maps.LatLng, end: google.maps.LatLng, waypointData: WaypointData[]) => {
         const combinations = sortCombinationsByPathDistance(
@@ -320,25 +378,18 @@ export default function WhereToApp() {
         const topResults = routes.sort((a, b) => a.duration - b.duration).slice(0, 3);
         setResults(topResults);
         setSelectedIndex(0);
-        if (directionsRenderer.current) {
-            directionsRenderer.current.setMap(mapInstance);
-            directionsRenderer.current.setDirections(topResults[0].response);
-        }
+        await showRoute(topResults[0].route);
     };
 
     const handleReset = () => {
         setResults([]);
         setSelectedIndex(0);
-        if (directionsRenderer.current) {
-            directionsRenderer.current.setMap(null);
-        }
+        clearRoute();
     };
 
     const handleSelectRoute = (index: number) => {
         setSelectedIndex(index);
-        if (directionsRenderer.current && results[index]) {
-            directionsRenderer.current.setDirections(results[index].response);
-        }
+        if (results[index]) showRoute(results[index].route);
     };
 
     const getGoogleMapsLink = () => {
@@ -365,14 +416,7 @@ export default function WhereToApp() {
 
                         <div className={styles.formGroup}>
                             <label className={styles.label} htmlFor="startLocation">Starting Location:</label>
-                            <input
-                                id="startLocation"
-                                ref={startInputRef}
-                                className={styles.input}
-                                value={startQuery}
-                                onChange={(e) => { startPlaceRef.current = null; setStartQuery(e.target.value); }}
-                                placeholder="Enter a location"
-                            />
+                            <PlaceInput id="startLocation" ready={mapStatus === 'ready'} value={startQuery} onChange={handleStartChange} />
                             <div className={styles.checkboxGroup}>
                                 <input
                                     type="checkbox"
@@ -387,14 +431,7 @@ export default function WhereToApp() {
                         {!sameStartEnd && (
                             <div className={styles.formGroup}>
                                 <label className={styles.label} htmlFor="endLocation">Ending Location:</label>
-                                <input
-                                    id="endLocation"
-                                    ref={endInputRef}
-                                    className={styles.input}
-                                    value={endQuery}
-                                    onChange={(e) => { endPlaceRef.current = null; setEndQuery(e.target.value); }}
-                                    placeholder="Enter a location"
-                                />
+                                <PlaceInput id="endLocation" ready={mapStatus === 'ready'} value={endQuery} onChange={handleEndChange} />
                             </div>
                         )}
 

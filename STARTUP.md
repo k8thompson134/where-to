@@ -4,7 +4,7 @@
 
 - Node.js 20+
 - Claude API key from [Anthropic Console](https://console.anthropic.com/)
-- Google Maps API key from [Google Cloud Console](https://console.cloud.google.com/apis/credentials) with the Maps JavaScript and Places APIs enabled
+- Google Maps API key from [Google Cloud Console](https://console.cloud.google.com/apis/credentials) with these APIs enabled: Maps JavaScript API, Places API (New), Routes API, Geocoding API
 
 ## Quick Start
 
@@ -33,6 +33,7 @@ Open http://localhost:3000. The filter endpoint is `POST /api/filter`.
 |----------|---------|-------------|
 | `ANTHROPIC_API_KEY` | — | Claude API key (server only) |
 | `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` | — | Google Maps key (exposed to the browser; restrict it by HTTP referrer) |
+| `NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID` | `DEMO_MAP_ID` | Map ID for the map; required by the route's stop markers (Advanced Markers). Create one under Google Maps Platform → Map Management |
 | `PROMPT_STYLE` | `primary` | Filter prompt style: `primary`, `pattern`, `minimal`, `verbose`, `fewshot`, `fewshot2` (compare with `npm run eval`) |
 
 ## Deployment

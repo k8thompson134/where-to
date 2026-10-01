@@ -13,6 +13,12 @@ describe('mapsErrorMessage', () => {
     expect(mapsErrorMessage('OVER_QUERY_LIMIT')).toMatch(/usage limit/);
   });
 
+  it('maps the RPC codes thrown by Places (New) and Routes', () => {
+    expect(mapsErrorMessage('PERMISSION_DENIED')).toMatch(/API key or billing/);
+    expect(mapsErrorMessage('UNAUTHENTICATED')).toMatch(/API key or billing/);
+    expect(mapsErrorMessage('RESOURCE_EXHAUSTED')).toMatch(/usage limit/);
+  });
+
   it('includes the raw status for anything else', () => {
     expect(mapsErrorMessage('UNKNOWN_ERROR')).toContain('UNKNOWN_ERROR');
   });

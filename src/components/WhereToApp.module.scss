@@ -330,3 +330,12 @@ $accent-color: #6B9DC2; // Brighter Earthy Blue
     padding: $space-3;
     margin-bottom: $space-4;
 }
+
+.placeAutocomplete {
+    display: block;
+    width: 100%;
+    color-scheme: dark;
+    background-color: rgba($deep-space, 0.6);
+    border: 1px solid $border-gray;
+    border-radius: $radius-lg;
+}
